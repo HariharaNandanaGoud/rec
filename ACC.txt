@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<definitions xmlns="http://www.omg.org/spec/BPMN/20100524/MODEL" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:activiti="http://activiti.org/bpmn" xmlns:bpmndi="http://www.omg.org/spec/BPMN/20100524/DI" xmlns:omgdc="http://www.omg.org/spec/DD/20100524/DC" xmlns:omgdi="http://www.omg.org/spec/DD/20100524/DI" typeLanguage="http://www.w3.org/2001/XMLSchema" expressionLanguage="http://www.w3.org/1999/XPath" targetNamespace="http://www.activiti.org/test">
+  <process id="Z_acceptCorrespondingCode" name="(Custom) Accept Corresponding Code" isExecutable="true">
+    <documentation>Add a corresponding code to a candidate business term.</documentation>
+    <startEvent id="startevent1" name="Start" activiti:initiator="requestorUser">
+      <extensionElements>
+        <activiti:formProperty id="correspondingcode" name="Corresponding Code" type="string"></activiti:formProperty>
+        <activiti:formProperty id="correspondingcodeList" name="Corresponding Code List" type="vocabulary">
+          <activiti:value id="proposedFixed" name="True"></activiti:value>
+          <activiti:value id="proposedValues" name="${utility.toIdCsv(vocabularyComponent.getVocabulariesByType('00000000-0000-0000-0000-000000020001',true))}"></activiti:value>
+        </activiti:formProperty>
+        <activiti:formProperty id="startdate" name="Start Date" type="datetime" required="true"></activiti:formProperty>
+        <activiti:formProperty id="enddate" name="End Date (Optional)" type="datetime"></activiti:formProperty>
+        <activiti:formProperty id="submitBtn" name="Submit" type="button"></activiti:formProperty>
+        <activiti:formProperty id="deployedStsSig" name="Status signifier (deployed)" type="string" default="Deployed" readable="false" required="true"></activiti:formProperty>
+        <activiti:formProperty id="retiredStsSig" name="Status signifier (retired)" type="string" default="Retired" readable="false" required="true"></activiti:formProperty>
+        <activiti:formProperty id="termStsSig" name="Term Status Signifier" type="string" default="Term" readable="false" required="true"></activiti:formProperty>
+        <activiti:formProperty id="businessTermTypeAttID" name="Business Term Type Attribute Id" type="assetType" default="00000000-0000-0000-0000-000000011001" readable="false"></activiti:formProperty>
+        <activiti:formProperty id="codeSetRelTypeRole" name="Code Set Relationship Type Role" type="string" default="Is Part of Codeset" readable="false" required="true"></activiti:formProperty>
+        <activiti:formProperty id="codeListKeyword" name="Keyword for matching Code List" type="string" default="Code List" readable="false" required="true"></activiti:formProperty>
+        <activiti:formProperty id="codeSetKeyword" name="Keyword for matching Code Set" type="string" default="Code Set" readable="false" required="true"></activiti:formProperty>
+      </extensionElements>
+    </startEvent>
+    <endEvent id="endevent1" name="End"></endEvent>
+    <scriptTask id="validationScriptTask" name="Validate" scriptFormat="groovy" activiti:autoStoreVariables="false">
+      <script>import com.collibra.dgc.core.exceptions.DGCException
+
+if(execution.getVariable("termStsSig") == item.getType().getCanonicalName()){
+	termProcessStatus = representationComponent.getRepresentation(item.id).getStatus().getSignifier()
+	if(termProcessStatus == execution.getVariable("deployedStsSig") || termProcessStatus == execution.getVariable("retiredStsSig")){
+		loggerComponent.error("ERROR: Term is in "+termProcessStatus+" status.")
+		dgcError = new DGCException("Term is in "+termProcessStatus+" status. Process halted!")
+		dgcError.setTitleCode ('Process Status Error')
+		throw dgcError
+	}else if(correspondingcode == '' &amp;&amp; correspondingcodeList == '' &amp;&amp; startdate == ''){
+			loggerComponent.error("ERROR: An attempt is made to submit empty form. The operation cannot be completed.")
+			dgcError = new DGCException("An attempt is made to submit empty form. The operation cannot be completed.")
+			dgcError.setTitleCode('Empty Form Submission Error')
+			throw dgcError
+		}
+		else if(enddate != null) {
+        		if(enddate &lt; startdate){
+			loggerComponent.error("ERROR: End Date should be greater than Start Date.")
+			dgcError = new DGCException("End Date should be greater than Start Date")
+			dgcError.setTitleCode('Corresponding Code List Error')
+			throw dgcError
+        	}
+		}
+	
+}else{
+	loggerComponent.error("ERROR: Selected item is not a term. Process halted!")
+	dgcError = new DGCException("Selected item is not a term. Process halted!")
+	dgcError.setTitleCode ('Assest Type Error')
+	throw dgcError
+}</script>
+    </scriptTask>
+    <sequenceFlow id="flow1" sourceRef="startevent1" targetRef="initializeScriptTask"></sequenceFlow>
+    <serviceTask id="createCodeServTask" name="Create Code" activiti:class="com.collibra.dgc.core.workflow.activiti.delegate.TermIntakeDelegate">
+      <extensionElements>
+        <activiti:field name="signifier">
+          <activiti:expression><![CDATA[${correspondingcode}]]></activiti:expression>
+        </activiti:field>
+        <activiti:field name="conceptType">
+          <activiti:expression><![CDATA[${codeTypeAttID}]]></activiti:expression>
+        </activiti:field>
+        <activiti:field name="vocabulary">
+          <activiti:expression><![CDATA[${correspondingcodeList}]]></activiti:expression>
+        </activiti:field>
+        <activiti:field name="note">
+          <activiti:expression><![CDATA[${note}]]></activiti:expression>
+        </activiti:field>
+        <activiti:field name="example">
+          <activiti:expression><![CDATA[${example}]]></activiti:expression>
+        </activiti:field>
+        <activiti:field name="usesrelation">
+          <activiti:expression><![CDATA[${usesrelation}]]></activiti:expression>
+        </activiti:field>
+      </extensionElements>
+    </serviceTask>
+    <scriptTask id="captureCodeIDScriptTask" name="Capture code ID" scriptFormat="groovy" activiti:autoStoreVariables="false">
+      <script>execution.setVariable("createdCodeID", outputCreatedTermId)
+	  loggerComponent.info("Here createdCodeID = " +createdCodeID)
+	  </script>
+    </scriptTask>
+    <scriptTask id="findCodeSetScriptTask" name="Find code set" scriptFormat="groovy" activiti:autoStoreVariables="false">
+      <script>import java.util.ArrayList
+
+def codeList_name = vocabularyComponent.getVocabulary(correspondingcodeList).toString()
+codeset_name_rplc = codeList_name.replaceFirst(codeListKeyword, codeSetKeyword)
+
+if(codeset_name_rplc == ''){
+	loggerComponent.error("[Accept Code] Code set matching error: Cannot find matching code set with specified code list.")
+	execution.setVariable("codeSetID", "")
+}
+else{
+	codeSetArrList = termComponent.findTermsContainingSignifier(codeset_name_rplc,null,null,null,true,true,"TE",0,0)
+        loggerComponent.info("Here codeSetArrList = " +codeSetArrList)
+	for(i=0;i&lt;codeSetArrList.size();i++){
+		if(codeSetArrList.get(i).getSignifier() == codeset_name_rplc){
+			execution.setVariable("codeSetID", codeSetArrList.get(i).getId())
+        loggerComponent.info("Here codeSetID = " +codeSetID)
+        def terms_codeset = vocabularyComponent.getTerms(codeSetID, 0, 0);
+        loggerComponent.info("Here terms_codeset = " +terms_codeset)
+		}
+	}
+}</script>
+    </scriptTask>
+    <scriptTask id="relateCodeScriptTask" name="Relate code" scriptFormat="groovy" activiti:autoStoreVariables="false">
+      <script>// Relate business term to code
+long relationStartDate = 0L
+	  long relationEndDate = 0L
+	  
+	  if(startdate != null) {
+	relationStartDate = startdate.getTime()
+} 
+if(enddate != null) {
+	relationEndDate = enddate.getTime()
+}
+
+if(relationEndDate != 0L) {
+	relationComponent.addRelation(item.id, codeRelTypeID, createdCodeID,relationStartDate,relationEndDate)
+	}else {
+	relationComponent.addRelation(item.id, codeRelTypeID, createdCodeID,relationStartDate,null)
+	}
+        
+// Relate code set
+    
+if (alreadyPresent == false) {
+if(codeSetID != ""){
+	relationComponent.addRelation(createdCodeID, codeSetRelTypeID,codeSetID,relationStartDate,null)
+	}
+}
+
+if (alreadyPresent == true) {
+if(codeSetID != ""){
+        def getrelation = relationComponent.findRelationsBySourceAndTargetAndType(codeSetRelTypeID,createdCodeID,codeSetID,0,0)
+		loggerComponent.info("Here getrelation = " +getrelation)
+	relationComponent.change(getrelation.get(0).getId(),createdCodeID,codeSetID,relationStartDate,null)
+	}
+}
+     
+</script>
+    </scriptTask>
+    <sequenceFlow id="flow3" sourceRef="createCodeServTask" targetRef="captureCodeIDScriptTask"></sequenceFlow>
+    <sequenceFlow id="flow4" sourceRef="captureCodeIDScriptTask" targetRef="findCodeSetScriptTask"></sequenceFlow>
+    <sequenceFlow id="flow5" sourceRef="findCodeSetScriptTask" targetRef="relateCodeScriptTask"></sequenceFlow>
+    <sequenceFlow id="flow6" sourceRef="relateCodeScriptTask" targetRef="endevent1"></sequenceFlow>
+    <scriptTask id="initializeScriptTask" name="Initialize Id" scriptFormat="groovy" activiti:autoStoreVariables="false">
+      <script>execution.setVariable("codeSetID","")
+
+execution.setVariable("businessTermTypeAttID",conceptTypeComponent.getBusinessTermType().getId())  //Business Term
+loggerComponent.info("Here businessTermTypeAttID = " +businessTermTypeAttID)
+execution.setVariable("codeTypeAttID",conceptTypeComponent.getCodeTermType().getId()) //Code Value
+loggerComponent.info("Here codeTypeAttID = " +codeTypeAttID)
+execution.setVariable("codeRelTypeID",relationTypeComponent.findRelationTypesContainingRole("Corresponding Code").get(0).getId())
+loggerComponent.info("Here codeRelTypeID = " +codeRelTypeID)
+execution.setVariable("codeSetRelTypeID",relationTypeComponent.findRelationTypesContainingRole(codeSetRelTypeRole).get(0).getId())
+loggerComponent.info("Here codeSetRelTypeID = " +codeSetRelTypeID)</script>
+    </scriptTask>
+    <sequenceFlow id="flow7" sourceRef="initializeScriptTask" targetRef="validationScriptTask"></sequenceFlow>
+    <sequenceFlow id="flow8" sourceRef="validationScriptTask" targetRef="scripttask1"></sequenceFlow>
+    <scriptTask id="scripttask1" name="Script Task" scriptFormat="groovy" activiti:autoStoreVariables="false">
+      <script>def codeList = vocabularyComponent.getVocabulary(correspondingcodeList);
+def terms = vocabularyComponent.getTerms(correspondingcodeList, 0, 0);
+        loggerComponent.info("Here terms = " +terms)
+def size = vocabularyComponent.getNumberOfTerms(correspondingcodeList)
+        loggerComponent.info("Here size = " +size)
+def alreadyPresent = false
+for (int i = 0; i &lt; size; i++) {
+	// loggerComponent.info("The following term already exists: " + terms.get(i) + "||" + correspondingcode);
+	if (correspondingcode == terms.get(i).getSignifier()) {
+		alreadyPresent = true
+		loggerComponent.info("The following term already exists: " + terms.get(i));
+		execution.setVariable("createdCodeID", terms.get(i).getId())
+		loggerComponent.info("Here createdCodeID = " +createdCodeID)
+		break;
+	}
+}
+execution.setVariable("alreadyPresent", alreadyPresent)</script>
+    </scriptTask>
+    <exclusiveGateway id="exclusivegateway1" name="Exclusive Gateway"></exclusiveGateway>
+    <sequenceFlow id="flow13" sourceRef="scripttask1" targetRef="exclusivegateway1"></sequenceFlow>
+    <sequenceFlow id="flow14" sourceRef="exclusivegateway1" targetRef="createCodeServTask">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${!execution.getVariable("alreadyPresent")}]]></conditionExpression>
+    </sequenceFlow>
+    <userTask id="usertask1" name="Information Message" activiti:candidateUsers="user(${requestorUser})">
+      <documentation> The specified Code value already exists in the Code list domain.&lt;br/&gt;&amp;nbsp;&amp;diams; Corresponding Code = ${correspondingcode} &lt;br/&gt;&amp;nbsp;&amp;diams; Corresponding Code List = ${vocabularyComponent.getVocabulary(correspondingcodeList).toString()} </documentation>
+      <extensionElements>
+        <activiti:formProperty id="Warning" name="Information Message" type="string" default="Press OK"></activiti:formProperty>
+        <activiti:formProperty id="Submit" name="Ok" type="button"></activiti:formProperty>
+      </extensionElements>
+    </userTask>
+    <sequenceFlow id="flow15" sourceRef="exclusivegateway1" targetRef="usertask1">
+      <conditionExpression xsi:type="tFormalExpression"><![CDATA[${execution.getVariable("alreadyPresent")}]]></conditionExpression>
+    </sequenceFlow>
+    <sequenceFlow id="flow16" sourceRef="usertask1" targetRef="findCodeSetScriptTask"></sequenceFlow>
+  </process>
+  <bpmndi:BPMNDiagram id="BPMNDiagram_Z_acceptCorrespondingCode">
+    <bpmndi:BPMNPlane bpmnElement="Z_acceptCorrespondingCode" id="BPMNPlane_Z_acceptCorrespondingCode">
+      <bpmndi:BPMNShape bpmnElement="startevent1" id="BPMNShape_startevent1">
+        <omgdc:Bounds height="35.0" width="35.0" x="54.0" y="140.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="endevent1" id="BPMNShape_endevent1">
+        <omgdc:Bounds height="35.0" width="35.0" x="1068.0" y="140.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="validationScriptTask" id="BPMNShape_validationScriptTask">
+        <omgdc:Bounds height="55.0" width="105.0" x="254.0" y="130.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="createCodeServTask" id="BPMNShape_createCodeServTask">
+        <omgdc:Bounds height="55.0" width="105.0" x="448.0" y="130.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="captureCodeIDScriptTask" id="BPMNShape_captureCodeIDScriptTask">
+        <omgdc:Bounds height="55.0" width="105.0" x="598.0" y="130.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="findCodeSetScriptTask" id="BPMNShape_findCodeSetScriptTask">
+        <omgdc:Bounds height="55.0" width="105.0" x="758.0" y="130.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="relateCodeScriptTask" id="BPMNShape_relateCodeScriptTask">
+        <omgdc:Bounds height="55.0" width="105.0" x="908.0" y="130.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="initializeScriptTask" id="BPMNShape_initializeScriptTask">
+        <omgdc:Bounds height="55.0" width="105.0" x="114.0" y="130.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="scripttask1" id="BPMNShape_scripttask1">
+        <omgdc:Bounds height="55.0" width="105.0" x="254.0" y="256.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="exclusivegateway1" id="BPMNShape_exclusivegateway1">
+        <omgdc:Bounds height="40.0" width="40.0" x="483.0" y="263.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNShape bpmnElement="usertask1" id="BPMNShape_usertask1">
+        <omgdc:Bounds height="57.0" width="123.0" x="568.0" y="255.0"></omgdc:Bounds>
+      </bpmndi:BPMNShape>
+      <bpmndi:BPMNEdge bpmnElement="flow1" id="BPMNEdge_flow1">
+        <omgdi:waypoint x="89.0" y="157.0"></omgdi:waypoint>
+        <omgdi:waypoint x="114.0" y="157.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow3" id="BPMNEdge_flow3">
+        <omgdi:waypoint x="553.0" y="157.0"></omgdi:waypoint>
+        <omgdi:waypoint x="598.0" y="157.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow4" id="BPMNEdge_flow4">
+        <omgdi:waypoint x="703.0" y="157.0"></omgdi:waypoint>
+        <omgdi:waypoint x="758.0" y="157.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow5" id="BPMNEdge_flow5">
+        <omgdi:waypoint x="863.0" y="157.0"></omgdi:waypoint>
+        <omgdi:waypoint x="908.0" y="157.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow6" id="BPMNEdge_flow6">
+        <omgdi:waypoint x="1013.0" y="157.0"></omgdi:waypoint>
+        <omgdi:waypoint x="1068.0" y="157.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow7" id="BPMNEdge_flow7">
+        <omgdi:waypoint x="219.0" y="157.0"></omgdi:waypoint>
+        <omgdi:waypoint x="254.0" y="157.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow8" id="BPMNEdge_flow8">
+        <omgdi:waypoint x="306.0" y="185.0"></omgdi:waypoint>
+        <omgdi:waypoint x="306.0" y="256.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow13" id="BPMNEdge_flow13">
+        <omgdi:waypoint x="359.0" y="283.0"></omgdi:waypoint>
+        <omgdi:waypoint x="483.0" y="283.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow14" id="BPMNEdge_flow14">
+        <omgdi:waypoint x="503.0" y="263.0"></omgdi:waypoint>
+        <omgdi:waypoint x="500.0" y="185.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow15" id="BPMNEdge_flow15">
+        <omgdi:waypoint x="523.0" y="283.0"></omgdi:waypoint>
+        <omgdi:waypoint x="568.0" y="283.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+      <bpmndi:BPMNEdge bpmnElement="flow16" id="BPMNEdge_flow16">
+        <omgdi:waypoint x="691.0" y="283.0"></omgdi:waypoint>
+        <omgdi:waypoint x="810.0" y="283.0"></omgdi:waypoint>
+        <omgdi:waypoint x="810.0" y="185.0"></omgdi:waypoint>
+      </bpmndi:BPMNEdge>
+    </bpmndi:BPMNPlane>
+  </bpmndi:BPMNDiagram>
+</definitions>
