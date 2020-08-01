@@ -1,0 +1,464 @@
+SELECT DISTINCT PROCESSID FROM ADMIN.PROCESS_TABLE WHERE (CONSENTPROCESSFLAG IS NULL or CONSENTPROCESSFLAG='I' )AND PROCESS_FLAG='S'
+
+#$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/inboundconsent_processid_list.txt
+(List of ProcessID's to Process)
+
+cat #$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/inboundconsent_processid_list.txt|tr '\n' ','|sed 's/,$//g'
+(Get all the  processid's from next line to single line with ',' seperator and removes last comma from the list)
+
+Field(Field(read_consent_processid.$CommandOutput,@FM,1),'@',1)
+
+cat #$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/inboundconsent_processid_list.txt|awk 'NF'|wc -l
+(Checks whether it has atleast 1 ProcessID to process, if available then nested will allow further)
+
+UPDATE ADMIN.PROCESS_TABLE SET CONSENTPROCESSFLAG='I' WHERE PROCESSID=ORCHESTRATE.PROCESSID
+(Updtes the status to I for the Processid's which are processing)
+
+SELECT MDMID,SOURCECODE,SOURCECONTACTID,STARTDATE,ENDDATE,EMAILADDRESS,CONSENTTYPE,MARKETINGPREFERENCES,SourceDateReceivedBySource,
+ORIGINALCONSENTDATE,MDMCREATEDDATE FROM (SELECT MDMID,SOURCECODE,SOURCECONTACTID,PROCESSID,STARTDATE,ENDDATE,EMAILADDRESS,CONSENTTYPE,MarketingPreferences,SourceDateReceivedBySource,
+ORIGINALCONSENTDATE,MDMCREATEDDATE,ROW_NUMBER() OVER (PARTITION BY MDMID,STARTDATE,EMAILADDRESS,CONSENTTYPE ORDER BY PROCESSID DESC) AS RNK FROM 
+(SELECT * FROM MAP.CONTACT_EMAIL_CONSENT WHERE SOURCECODE <> 'CRM' AND 
+ PROCESSID IN (#INPUTPROCESSID#) AND CHANGEFLAG='Y' and MDMUpdatedDate is null )B)C WHERE C.RNK=1
+(Get the data as per the above query)
+ 
+MDM.OUTBOUND_CONTACT_EMAIL_CONSENT
+(Loads the data in this table)
+
+UPDATE ADMIN.PROCESS_TABLE SET CONSENTPROCESSFLAG='S' WHERE PROCESSID=ORCHESTRATE.PROCESSID
+
+Note:
+$JobStatus=1 Finished Ok
+$JobStatus=2 Warning
+$JobStatus=3 Failed/Aborted
+ProcessFlag always set to Null is there any special reason to flag it to null.
+Preferences (Marketing Preference) is coming only from ELOQUA.
+ 
+ 
+===========================================================================================
+
+OUTBOUND :
+STEP1 : 
+sh #$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Scripts/outbound_max_process_id_generation.sh #$MDM_FILE_SERVER_PATH# #$MDM_INTEGRATION_LOCATION# |tail -n 1
+
+sh -x /projects/MDM_DATA/System_Integration/Scripts/outbound_max_process_id_generation.sh /projects/MDM_DATA/ /System_Integration/ |tail -n 1
+
+================================SCRIPT==============================
+
+ 'POC.DPN_CANADA_HIVE_TEST' 'BIGSQL' 'ca_sc_edh_etldev' 'Swift04!' 'canatbimdev004'
+
+MDM_FILE_SERVER_PATH=$1
+MDM_INTEGRATION_LOCATION=$2
+
+---WAIT_TIME=1
+---ITERATION=3
+
+WAITTIME=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Config/outbound_run_waittime_iteration_params.config|grep 'WAIT_TIME'|awk -F '=' '{print $2}'`;
+ITERATION=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Config/outbound_run_waittime_iteration_params.config|grep 'ITERATION'|awk -F '=' '{print $2}'`;
+
+. /opt/IBM/InformationServer/Server/DSEngine/dsenv
+
+i=1;
+while [ $i -le $ITERATION ];
+do
+/opt/IBM/InformationServer/Server/DSEngine/bin/dsjob -run -wait MasterDataManagement Extract_Outbound_ProcessId;
+RC=$?;
+if [ $RC -gt 2 ]
+then
+echo "@4@0@" > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid_value.txt;
+fi
+INBOUND_RUNNING_COUNT=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid.txt|grep 'COL1'|awk -F ',' '{print $2}'`;
+OUTBOUND_MAX_PROCESSID=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid.txt|grep 'COL2'|awk -F ',' '{print $2}'`;
+OUTBOUND_FAIL_PROCESSID=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid.txt|grep 'COL3'|awk -F ',' '{print $2}'`;
+OUTBOUND_FAIL_MAX_PROCESSID=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid.txt|grep 'COL4'|awk -F ',' '{print $2}'`;
+OUTBOUND_PROCESSID_COUNT=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid.txt|grep 'COL5'|awk -F ',' '{print $2}'`;
+if [ $INBOUND_RUNNING_COUNT -gt 0 ] && [ $i -ne $ITERATION ]
+then
+sleep $WAITTIME;
+i=`expr $i + 1`;
+///// It will loop untill 3 iterations then it wont satify so goes to else clause////////
+elif [ $INBOUND_RUNNING_COUNT -gt 0 ] && [ $i -eq $ITERATION ]
+then
+echo "@1@0@" > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid_value.txt;
+i=`expr $ITERATION + 1`;
+//////// if the inbound process is still running then the loop get finished, else goes to next step //////
+elif [ $OUTBOUND_FAIL_PROCESSID -gt 0 ]
+then
+echo "@3@$OUTBOUND_FAIL_MAX_PROCESSID@" > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid_value.txt;
+i=`expr $ITERATION + 1`;
+//////// if any of the failed process exists then it will store in processid_value file//////////////
+else
+echo "@2@0@" > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/outbound_latest_processid_value.txt;
+i=`expr $ITERATION + 1`;
+///////if everythign is ok with out any fail processes then will store @2@0@ in file
+fi
+done
+
++ echo @2@0@
+++ expr 3 + 1
++ i=4
+
+===============================
+EXAMPLE:
++ MDM_FILE_SERVER_PATH=/projects/MDM_DATA/
++ MDM_INTEGRATION_LOCATION=/System_Integration/
+++ cat /projects/MDM_DATA//System_Integration/Config/outbound_run_waittime_iteration_params.config
+++ grep WAIT_TIME
+++ awk -F = '{print $2}'
++ WAITTIME=1m
+++ cat /projects/MDM_DATA//System_Integration/Config/outbound_run_waittime_iteration_params.config
+++ grep ITERATION
+++ awk -F = '{print $2}'
++ ITERATION=3
+
++ i=1
++ '[' 1 -le 3 ']'
++ /opt/IBM/InformationServer/Server/DSEngine/bin/dsjob -run -wait MasterDataManagement Extract_Outbound_ProcessId
+Waiting for job...
+Finished waiting for job
+
+Status code = 0
++ RC=0
++ '[' 0 -gt 2 ']'
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL1
+++ awk -F , '{print $2}'
++ INBOUND_RUNNING_COUNT=0
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL2
+++ awk -F , '{print $2}'
++ OUTBOUND_MAX_PROCESSID=9223372036854775807
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL3
+++ awk -F , '{print $2}'
++ OUTBOUND_FAIL_PROCESSID=1
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL4
+++ awk -F , '{print $2}'
++ OUTBOUND_FAIL_MAX_PROCESSID=20200407150000
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL5
+++ awk -F , '{print $2}'
++ OUTBOUND_PROCESSID_COUNT=134
++ '[' 0 -gt 0 ']'
++ '[' 0 -gt 0 ']'
++ '[' 1 -gt 0 ']'
++ echo @3@20200407150000@
+++ expr 3 + 1
++ i=4
++ '[' 4 -le 3 ']'
+
+Example when no process is failed:
+
++ MDM_FILE_SERVER_PATH=/projects/MDM_DATA/
++ MDM_INTEGRATION_LOCATION=/System_Integration/
+++ cat /projects/MDM_DATA//System_Integration/Config/outbound_run_waittime_iteration_params.config
+++ grep WAIT_TIME
+++ awk -F = '{print $2}'
++ WAITTIME=1m
+++ cat /projects/MDM_DATA//System_Integration/Config/outbound_run_waittime_iteration_params.config
+++ grep ITERATION
+++ awk -F = '{print $2}'
++ ITERATION=3
+
++ i=1
++ '[' 1 -le 3 ']'
++ /opt/IBM/InformationServer/Server/DSEngine/bin/dsjob -run -wait MasterDataManagement Extract_Outbound_ProcessId
+Finished waiting for job
+
+Status code = 0
++ RC=0
++ '[' 0 -gt 2 ']'
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL1
+++ awk -F , '{print $2}'
++ INBOUND_RUNNING_COUNT=0
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL2
+++ awk -F , '{print $2}'
++ OUTBOUND_MAX_PROCESSID=9223372036854775807
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL3
+++ awk -F , '{print $2}'
++ OUTBOUND_FAIL_PROCESSID=0
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL4
+++ awk -F , '{print $2}'
++ OUTBOUND_FAIL_MAX_PROCESSID=0
+++ cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid.txt
+++ grep COL5
+++ awk -F , '{print $2}'
++ OUTBOUND_PROCESSID_COUNT=134
++ '[' 0 -gt 0 ']'
++ '[' 0 -gt 0 ']'
++ '[' 0 -gt 0 ']'
++ echo @2@0@
+++ expr 3 + 1
++ i=4
++ '[' 4 -le 3 ']'
+
+===============================
+
+SELECT 'COL1' AS COL1, CAST(COUNT(*) AS BIGINT) COL2 FROM ADMIN.PROCESS_TABLE WHERE PROCESS_FLAG='I'
+UNION
+SELECT 'COL2' AS COL1,MAX(OUTBOUNDPROCESSID) AS COL2 FROM ADMIN.PROCESS_TABLE_OUTBOUND
+UNION
+SELECT 'COL3' AS COL1,CAST(COUNT(*) AS BIGINT) COL2 FROM ADMIN.PROCESS_TABLE_OUTBOUND WHERE OUTBOUNDPROCESSFLAG='F'
+UNION
+SELECT 'COL4' AS COL1,CAST(MAX(OUTBOUNDPROCESSID) AS BIGINT) COL2 FROM ADMIN.PROCESS_TABLE_OUTBOUND WHERE OUTBOUNDPROCESSFLAG='F'
+UNION
+SELECT 'COL5' AS COL1, CAST(COUNT(*) AS BIGINT) COL2 FROM ADMIN.PROCESS_TABLE_OUTBOUND;
+
+
+cat /projects/MDM_DATA//System_Integration/Data/outbound_latest_processid_value.txt|tail -1
+o/p @2@0@
+Field(Field(latest_value_file.$CommandOutput,@FM,1),'@',2)
+Field(Field(latest_value_file.$CommandOutput,@FM,1),'@',3)
+
+checking if the value is '1' then stopping the process mentioning inbound process are still running
+if value is 2 or 3 then proceed for next stepts
+
+
+SELECT DISTINCT PROCESSID FROM ADMIN.PROCESS_TABLE WHERE (OUTBOUNDPROCESSFLAG IS NULL OR OUTBOUNDPROCESSFLAG='I') and (PROCESS_FLAG='S')
+(storing in 2 different files)
+
+#$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/inbound_processid_list.txt
+example 
+\processid\
+\processid\
+\processid\
+
+#$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/inbound_processid_list_update.txt
+processid
+processid
+
+
+cat #$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/inbound_processid_list_update.txt|wc -l|tr -d '\n'
+cat /projects/MDM_DATA//System_Integration/Data/inbound_processid_list_update.txt|wc -l|tr -d '\n'
+(getting the no of processid's)
+
+Field(Field(ext_prcssid_cnt.$CommandOutput,@FM,1),'@',1)
+
+'Nested : if the list if = 0 then process halts if more than 0 then moves further
+
+updating the list of processid to I in admin table
+
+nested to split to recover failed processes (3) to new processes (2)
+
+Process (3):
+DELETE FROM MDM.OUTBOUND_DELTA WHERE PROCESSID=ORCHESTRATE.PROCESSID
+
+UPDATE ADMIN.PROCESS_TABLE_OUTBOUND SET OUTBOUNDPROCESSFLAG='I',STARTDATE=ORCHESTRATE.STARTDATE,ENDDATE=ORCHESTRATE.ENDDATE 
+WHERE OUTBOUNDPROCESSID=#OUTBOUNDPROCESSID#
+
+Process (2):
+INsert entry in "ADMIN.PROCESS_TABLE_OUTBOUND" with runid entered at starting of job
+
+
+if [ #uva_max_processid.SCRIPT_VALUE# -eq 2 ]; then echo #RUNID#; elif [ #uva_max_processid.SCRIPT_VALUE# -eq 3 ]; then echo #uva_max_processid.PROCESSID#; fi|tr -d '\n'
+
+Field(Field(ext_outbnd_prssid.$CommandOutput,@FM,1),'@',1)
+
+=========================================
+ACTUAL MASTER STARTS
+=========================================
+
+SELECT SOURCECODE,COLUMNNAME,KEYCOLUMN,TYPECOLUMN FROM ADMIN.OUTBOUND_CONFIG_FIELD_REF WHERE TABLENAME='CONTACT_EMAIL_CONSENT' AND PROCESS='OUTBOUND'
+
+#$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/config_delta_columns_#TABLENAME#.txt
+
+ELQ,consenttype,emailaddress,
+ELQ,sourcedatereceivedbysource,,
+ELQ,startdate,,
+
+cat #$MDM_FILE_SERVER_PATH##$MDM_INTEGRATION_LOCATION#Data/config_delta_columns_#TABLENAME#.txt|wc -l|tr -d '\n'
+
+sh -x /projects/MDM_DATA//System_Integration/Scripts/mdm_outbound_comparision_script.sh CONTACT_EMAIL /projects/MDM_DATA/ /System_Integration/
+
+#############################################################################################################
+#                                          Created by Jahangir Pasha on 12/09/2018      
+                #
+#Usage : The script takes table name as an argument.
+##       This script creates dynamic select query at run time.        #                                                                                                            #
+
+#############################################################################################################
+
+#!/bin/bash
+
+if [ $# -lt 3 ]
+then
+echo "invalid arguments passed to script"
+echo " expected arguments are 1 as e.g. Contact_Email"
+exit 1
+fi
+
+########################### input arguments ####################################
+
+TABLENAME=$1
+MDM_FILE_SERVER_PATH=$2
+MDM_INTEGRATION_LOCATION=$3
+
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file1_$TABLENAME;
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file2_$TABLENAME;
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/selvaluesfile_$TABLENAME.txt;
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/wherevaluesfile_$TABLENAME.txt;
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/groupvalues_$TABLENAME.txt;
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/filter_columns_$TABLENAME.txt;
+rm -f ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/final_filter_columns_$TABLENAME.txt;
+echo " CASE " > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file1_$TABLENAME;
+echo " CASE " > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file2_$TABLENAME;
+
+/////////config_delta_columns_tablename (where we have loaded the list of columns to be handled)
+
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_$TABLENAME.txt|awk -F ',' '{print $1}'|sort|uniq|awk 'NF' > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/filter_columns_$TABLENAME.txt;
+
+while read line
+do
+echo "\'${line}\'" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/final_filter_columns_$TABLENAME.txt
+done < ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/filter_columns_$TABLENAME.txt;
+
+///////////     + echo '\'\''ELQ\'\'''  (\'ELQ\')  //////////
+
+filter_values=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/final_filter_columns_$TABLENAME.txt|awk 'NF'|tr '\n' ','|tr -d '\n'|sed 's/,$//g'`;
+
+cat DDP_Tablelist.txt |awk 'NF'|tr '\n' ','|tr -d '\n'|sed 's/,$//g'
+
+
+PROCESSID=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/inbound_processid_list.txt|tr '\n' ','|awk 'NF'|sed 's/,$//g'`;
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_$TABLENAME.txt|sort|uniq > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt;
+jobcolumn=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $4}'|sort|uniq|awk 'NF'`;
+
+/// cat /projects/MDM_DATA//System_Integration/Data/config_delta_columns_uniq_CONTACT_EMAIL.txt|awk -F ',' '{print $4}'|sort|uniq|awk 'NF' ///
+
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $4}'|sort|uniq|awk 'NF' > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_job_values_$TABLENAME.txt;
+jobcolumn_count=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $4}'|sort|uniq|awk 'NF'|wc -l`;
+if [ $jobcolumn_count -gt 0 ]
+then
+echo "$jobcolumn AS TYPECOLUMN" > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/jobtypevalues_$TABLENAME.txt;
+else 
+echo "\'\' AS TYPECOLUMN" > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/jobtypevalues_$TABLENAME.txt;
+fi
+jobcolumnvalue=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/jobtypevalues_$TABLENAME.txt|awk 'NF'|tr -d '\n'`;
+typecolumn=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $3}'|sort|uniq|awk 'NF'`;
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $3}'|sort|uniq|awk 'NF' > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_values_$TABLENAME.txt;
+typecolumn_count=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $3}'|sort|uniq|awk 'NF'|wc -l`;
+if [ $typecolumn_count -gt 0 ]
+then
+i=1;
+while read line
+do
+if [ $i -gt 1 ]
+then
+echo "A.$line" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/selvaluesfile_$TABLENAME.txt;
+echo "AND A.$line=B.$line" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/wherevaluesfile_$TABLENAME.txt;
+echo ",$line" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/groupvalues_$TABLENAME.txt;
+i=`expr $i + 1 `;
+else 
+echo "A.$line" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/selvaluesfile_$TABLENAME.txt;
+echo "A.$line=B.$line" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/wherevaluesfile_$TABLENAME.txt;
+echo ",$line" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/groupvalues_$TABLENAME.txt;
+i=`expr $i + 1 `;
+fi
+done < ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_values_$TABLENAME.txt;
+
+
+else
+echo "1 AS DUMMYCOL" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/selvaluesfile_$TABLENAME.txt;
+echo "1=1" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/wherevaluesfile_$TABLENAME.txt;
+echo "" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/groupvalues_$TABLENAME.txt;
+fi
+
+SEL_VALS=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/selvaluesfile_$TABLENAME.txt|tr '\n' ','|sed 's/,$//g'|tr -d '\n'`;
+WHR_VALS=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/wherevaluesfile_$TABLENAME.txt|tr '\n' ' '|tr -d '\n'`;
+GRP_VALS=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/groupvalues_$TABLENAME.txt|tr '\n' ' '|tr -d '\n'`;
+
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_uniq_$TABLENAME.txt|awk -F ',' '{print $1,$2}' > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/mdm_source_$TABLENAME.txt;
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/mdm_source_$TABLENAME.txt|awk -F ' ' '{if (NF > 1 )print $1,$2}'| awk '{a[$1]=($1 in a)?a[$1]","$2:$1":A."$2} END{for(i in a){print a[i]}}'|while read line
+do
+a=`echo $line|awk -F ':' '{print $1}'`;
+b=`echo $line|awk -F ':' '{print $2}'|sed 's/,,/,/g'`;
+c=`echo $line|awk -F ',' '{print NF}'`;
+if [ $c -gt 1 ]
+then
+echo "WHEN LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1)=\'${a}\' THEN CONCAT($b)" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file1_$TABLENAME;
+echo "WHEN SOURCECODE=\'${a}\' THEN CONCAT($b)" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file2_$TABLENAME
+else
+echo "WHEN LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1)=\'${a}\' THEN $b" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file1_$TABLENAME;
+echo "WHEN SOURCECODE=\'${a}\' THEN $b" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file2_$TABLENAME;
+fi
+done
+echo " END VALUES_COL" >> ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file_$TABLENAME
+concat_values1=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file1_$TABLENAME`;
+concat_values2=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/concat_file2_$TABLENAME`;
+cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_values_$TABLENAME.txt|tr '\n' ','|sed 's/,$//g' > ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_key_values_$TABLENAME.txt;
+KEY_COLUMNS=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_key_values_$TABLENAME.txt`;
+KEY_COUNT=`cat ${MDM_FILE_SERVER_PATH}${MDM_INTEGRATION_LOCATION}Data/config_delta_columns_values_$TABLENAME.txt|wc -l`;
+if [ $KEY_COUNT -gt 1 ]
+then
+KEY_VALUES=`echo "CONCAT(${KEY_COLUMNS}) AS KEY_VALUES"`;
+elif [ $KEY_COUNT -eq 1 ]
+then KEY_VALUES=`echo "${KEY_COLUMNS} AS KEY_VALUES"`;
+else KEY_VALUES=`echo "\'\' AS KEY_VALUES"`;
+fi
+SELECT_MDM_QUERY=`echo "SELECT A.GRID,B.MDMID,B.SOURCEID AS SOURCECONTACTID,B.MDMID AS LEFT_MDMID,CAST(LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1) AS VARCHAR(10)) AS 
+SOURCECODE,Cast(LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1) as varchar(10)) AS LEFTSOURCECODE,${concat_values1}
+ END LEFT_NONKEY_VALUES,$KEY_VALUES,$jobcolumnvalue,1 AS MDM_IND,A.GRUPDATEDATE,A.GRSTATUSCODE,A.RECORDID AS GRRECID,B.MATCHSTATUSCODE AS MATCHSTATUSCODE,B.PROCESSID AS MATCH_PROCESSID FROM MDM.$TABLENAME A INNER JOIN MDM.GR_Match_Links B ON A.GRID=B.GRID AND B.GRID IN (SELECT DISTINCT GRID FROM MDM.$TABLENAME WHERE PROCESSID IN ($PROCESSID))"`; 
+SELECT_MAP_QUERY=`echo "SELECT A.MDMID,A.MDMID AS RIGHT_MDMID,A.SOURCECODE,A.SOURCECODE AS RIGHTSOURCECODE,A.SOURCECONTACTID,${concat_values2} END 
+RIGHTNONKEYVALUES,$KEY_VALUES,$jobcolumnvalue,1 AS MAP_IND,A.MDMCREATEDDATE,A.RECORDID AS MAPRECID FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY MDMID,SOURCECODE${GRP_VALS}
+ORDER BY PROCESSID DESC) AS RNK FROM MAP.$TABLENAME WHERE MDMID IN (SELECT DISTINCT MDMID FROM MDM.GR_MATCH_LINKS A INNER JOIN MDM.$TABLENAME B
+ON A.GRID=B.GRID AND B.PROCESSID IN ($PROCESSID)))A WHERE A.RNK=1"`;
+GRRECQUERY=`echo "SELECT MDMID,MDMCREATEDDATE AS MAPRECORDUPDATEDDATE,RECORDID AS MAPRECID FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY MDMID,SOURCECODE${GRP_VALS}
+ORDER BY PROCESSID DESC) AS RNK FROM MAP.$TABLENAME WHERE MDMID IN (SELECT DISTINCT MDMID FROM MDM.GR_MATCH_LINKS A INNER JOIN MDM.$TABLENAME B
+ON A.GRID=B.GRID AND B.PROCESSID IN ($PROCESSID)))A WHERE A.RNK=1"`;
+FINAL_DELTA_QUERY=`echo "WITH MAP_QUERY AS (${SELECT_MAP_QUERY}),MDM_QUERY AS (${SELECT_MDM_QUERY}) SELECT MDM_QUERY.GRID,MDM_IND,MAP_IND,MDM_QUERY.KEY_VALUES AS LEFT_KEY,MAP_QUERY.KEY_VALUES AS RIGHT_KEY,MDM_QUERY.GRUPDATEDATE,MDM_QUERY.GRSTATUSCODE,MDM_QUERY.GRRECID,MDM_QUERY.MATCHSTATUSCODE,MAP_QUERY.MDMCREATEDDATE,MAP_QUERY.MAPRECID,LEFTSOURCECODE,RIGHTSOURCECODE,LEFT_NONKEY_VALUES,RIGHTNONKEYVALUES,MDM_QUERY.TYPECOLUMN AS TYPECOLUMN,MAP_QUERY.TYPECOLUMN AS RIGHT_TYPECOLUMN,MDM_QUERY.MDMID AS LEFT_MDMID, MAP_QUERY.MDMID AS RIGHT_MDMID,MDM_QUERY.MATCH_PROCESSID FROM MDM_QUERY LEFT OUTER JOIN MAP_QUERY ON MDM_QUERY.MDMID=MAP_QUERY.MDMID AND MDM_QUERY.SOURCECODE=MAP_QUERY.SOURCECODE AND MDM_QUERY.KEY_VALUES=MAP_QUERY.KEY_VALUES WHERE (MDM_QUERY.SOURCECODE IN (${filter_values}) OR MAP_QUERY.SOURCECODE IN (${filter_values}))"`;
+###echo $GRRECQUERY@$FINAL_DELTA_QUERY@$SELECT_MAP_QUERY@SELECT_MDM_QUERY@;
+echo $GRRECQUERY@$FINAL_DELTA_QUERY@;
+
+
+SELECT_MDM_QUERY=`echo "SELECT A.GRID,B.MDMID,B.SOURCEID AS SOURCECONTACTID,B.MDMID AS LEFT_MDMID,CAST(LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1) AS VARCHAR(10)) AS 
+SOURCECODE,Cast(LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1) as varchar(10)) AS LEFTSOURCECODE,${concat_values1}
+ END LEFT_NONKEY_VALUES,$KEY_VALUES,$jobcolumnvalue,1 AS MDM_IND,A.GRUPDATEDATE,A.GRSTATUSCODE,A.RECORDID AS GRRECID,B.MATCHSTATUSCODE AS MATCHSTATUSCODE,B.PROCESSID AS MATCH_PROCESSID FROM MDM.$TABLENAME A INNER JOIN MDM.GR_Match_Links B ON A.GRID=B.GRID AND B.GRID IN (SELECT DISTINCT GRID FROM MDM.$TABLENAME WHERE PROCESSID IN ($PROCESSID))"`; 
+
+
+SELECT_MAP_QUERY=`echo "SELECT A.MDMID,A.MDMID AS RIGHT_MDMID,A.SOURCECODE,A.SOURCECODE AS RIGHTSOURCECODE,A.SOURCECONTACTID,${concat_values2} END 
+RIGHTNONKEYVALUES,$KEY_VALUES,$jobcolumnvalue,1 AS MAP_IND,A.MDMCREATEDDATE,A.RECORDID AS MAPRECID FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY MDMID,SOURCECODE${GRP_VALS}
+ORDER BY PROCESSID DESC) AS RNK FROM MAP.$TABLENAME WHERE MDMID IN (SELECT DISTINCT MDMID FROM MDM.GR_MATCH_LINKS A INNER JOIN MDM.$TABLENAME B
+ON A.GRID=B.GRID AND B.PROCESSID IN ($PROCESSID)))A WHERE A.RNK=1"`;
+
+
+GRRECQUERY=`echo "SELECT MDMID,MDMCREATEDDATE AS MAPRECORDUPDATEDDATE,RECORDID AS MAPRECID FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY MDMID,SOURCECODE${GRP_VALS}
+ORDER BY PROCESSID DESC) AS RNK FROM MAP.$TABLENAME WHERE MDMID IN (SELECT DISTINCT MDMID FROM MDM.GR_MATCH_LINKS A INNER JOIN MDM.$TABLENAME B
+ON A.GRID=B.GRID AND B.PROCESSID IN ($PROCESSID)))A WHERE A.RNK=1"`;
+
+
+
+FINAL_DELTA_QUERY=`echo "WITH MAP_QUERY AS (${SELECT_MAP_QUERY}),MDM_QUERY AS (${SELECT_MDM_QUERY}) SELECT MDM_QUERY.GRID,MDM_IND,MAP_IND,MDM_QUERY.KEY_VALUES AS LEFT_KEY,MAP_QUERY.KEY_VALUES AS RIGHT_KEY,MDM_QUERY.GRUPDATEDATE,MDM_QUERY.GRSTATUSCODE,MDM_QUERY.GRRECID,MDM_QUERY.MATCHSTATUSCODE,MAP_QUERY.MDMCREATEDDATE,MAP_QUERY.MAPRECID,LEFTSOURCECODE,RIGHTSOURCECODE,LEFT_NONKEY_VALUES,RIGHTNONKEYVALUES,MDM_QUERY.TYPECOLUMN AS TYPECOLUMN,MAP_QUERY.TYPECOLUMN AS RIGHT_TYPECOLUMN,MDM_QUERY.MDMID AS LEFT_MDMID, MAP_QUERY.MDMID AS RIGHT_MDMID,MDM_QUERY.MATCH_PROCESSID FROM MDM_QUERY LEFT OUTER JOIN MAP_QUERY ON MDM_QUERY.MDMID=MAP_QUERY.MDMID AND MDM_QUERY.SOURCECODE=MAP_QUERY.SOURCECODE AND MDM_QUERY.KEY_VALUES=MAP_QUERY.KEY_VALUES WHERE (MDM_QUERY.SOURCECODE IN (${filter_values}) OR MAP_QUERY.SOURCECODE IN (${filter_values}))"`;
+
+
+
+
+
+
+SELECT_MDM_QUERY = SELECT A.GRID,B.MDMID,B.MDMID AS LEFT_MDMID,CAST(LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1) AS VARCHAR(10)) AS SOURCECODE,Cast(LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1) as varchar(10)) AS LEFTSOURCECODE, CASE WHEN LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1)=\'CRM\' THEN A.originalconsentdate END NONKEYVALUES, CASE WHEN LEFT(B.MDMID, CHARINDEX(\'-\', B.MDMID + \'-\') -1)=\'CRM\' THEN A.originalconsentdate END LEFT_NONKEY_VALUES,CONCAT(emailaddress,startdate) AS KEY_VALUES,\'\' AS TYPECOLUMN FROM MDM.CONTACT_EMAIL_CONSENT A INNER JOIN MDM.GR_Match_Links B ON A.GRID=B.GRID WHERE B.MATCHSTATUSCODE=\'A\' AND A.PROCESSID IN (\'20190408055134174271\',\'20190306091258342964\') AND A.PROCESSID=B.PROCESSID
+
+SELECT_MAP_QUERY = SELECT A.MDMID,A.MDMID AS RIGHT_MDMID,A.SOURCECODE,A.SOURCECODE AS RIGHTSOURCECODE,A.SOURCECONTACTID, CASE WHEN SOURCECODE=\'CRM\' THEN A.originalconsentdate END NONKEYVALUES, CASE WHEN SOURCECODE=\'CRM\' THEN A.originalconsentdate END RIGHTNONKEYVALUES,CONCAT(emailaddress,startdate) AS KEY_VALUES,\'\' AS TYPECOLUMN FROM (SELECT *,ROW_NUMBER() OVER(PARTITION BY MDMID,SOURCECODE,emailaddress ,startdate ORDER BY PROCESSID DESC) AS RNK FROM MAP.CONTACT_EMAIL_CONSENT)A WHERE A.RNK=1
+
+
+
+cat DDP_Tablelist.txt|tr '\n' ','|awk 'NF'|sed 's/,$//g'
+sed -e '/^$/d' DDP_Tablelist.txt| tr '\n' ' '
+
+awk -v ORS="" '{$1=$1} 1 END { printf("\n"); }' DDP_Tablelist.txt
+
+cat DDP_Tablelist.txt | sed "s/$/,/g" | tr -d '\r\n'
+
+cat DDP_Tablelist.txt | awk '{print}' ORS='' 
+
+
+Type: List
+This mode determines how keys and values are specified. Explicit Keys & Values means that key & value columns must be explicitly defined. All Keys, Explicit Values means that value columns must be defined, but all other columns are key columns unless they are excluded. Explicit Keys & Values means that key & value columns must be explicitly defined. Explicit Keys, All Values means that key columns must be defined, but all other columns are value columns unless they are excluded.
+
+echo -ne `cat #$MDM_FILE_SERVER_PATH#/#$MDM_INTEGRATION_LOCATION#/Data/ADH_Upload_Request_Flag.txt | grep 'Y'`
+
+echo -ne `cat #$MDM_FILE_SERVER_PATH#/#$MDM_INTEGRATION_LOCATION#/Data/ADH_Upload_Request_Flag.txt | grep 'Y'` 
+ 
+Field(Field(Config_File_Load.$CommandOutput,@FM,1),",",1)
